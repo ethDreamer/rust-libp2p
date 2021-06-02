@@ -27,16 +27,16 @@ use crate::types::{
     GossipsubControlAction, GossipsubRpc, GossipsubSubscription, GossipsubSubscriptionAction,
     MessageId, PeerInfo, PeerKind, RawGossipsubMessage,
 };
+use asynchronous_codec::{Decoder, Encoder, Framed};
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
 use bytes::BytesMut;
 use futures::future;
 use futures::prelude::*;
-use asynchronous_codec::{Decoder, Encoder, Framed};
 use libp2p_core::{
     identity::PublicKey, InboundUpgrade, OutboundUpgrade, PeerId, ProtocolName, UpgradeInfo,
 };
-use log::{debug, warn};
+use log::warn;
 use prost::Message as ProtobufMessage;
 use std::{borrow::Cow, pin::Pin};
 use unsigned_varint::codec;
@@ -189,7 +189,7 @@ impl GossipsubCodec {
         let from = match message.from.as_ref() {
             Some(v) => v,
             None => {
-                debug!("Signature verification failed: No source id given");
+                warn!("Signature verification failed: No source id given");
                 return false;
             }
         };
@@ -197,7 +197,7 @@ impl GossipsubCodec {
         let source = match PeerId::from_bytes(&from) {
             Ok(v) => v,
             Err(_) => {
-                debug!("Signature verification failed: Invalid Peer Id");
+                warn!("Signature verification failed: Invalid Peer Id");
                 return false;
             }
         };
@@ -205,7 +205,7 @@ impl GossipsubCodec {
         let signature = match message.signature.as_ref() {
             Some(v) => v,
             None => {
-                debug!("Signature verification failed: No signature provided");
+                warn!("Signature verification failed: No signature provided");
                 return false;
             }
         };
@@ -371,7 +371,7 @@ impl Decoder for GossipsubCodec {
                     if seq_no.is_empty() {
                         None
                     } else if seq_no.len() != 8 {
-                        debug!(
+                        warn!(
                             "Invalid sequence number length for received message. SeqNo: {:?} Size: {}",
                             seq_no,
                             seq_no.len()
@@ -394,7 +394,7 @@ impl Decoder for GossipsubCodec {
                     }
                 } else {
                     // sequence number was not present
-                    debug!("Sequence number not present but expected");
+                    warn!("Sequence number not present but expected");
                     let message = RawGossipsubMessage {
                         source: None, // don't bother inform the application
                         data: message.data.unwrap_or_default(),
@@ -420,7 +420,7 @@ impl Decoder for GossipsubCodec {
                             Ok(peer_id) => Some(peer_id), // valid peer id
                             Err(_) => {
                                 // invalid peer id, add to invalid messages
-                                debug!("Message source has an invalid PeerId");
+                                warn!("Message source has an invalid PeerId");
                                 let message = RawGossipsubMessage {
                                     source: None, // don't bother inform the application
                                     data: message.data.unwrap_or_default(),

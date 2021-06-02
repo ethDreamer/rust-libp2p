@@ -24,7 +24,7 @@
 use crate::time_cache::TimeCache;
 use crate::{MessageId, TopicHash};
 use libp2p_core::PeerId;
-use log::{debug, trace, warn};
+use log::{trace, warn};
 use std::collections::{hash_map, HashMap, HashSet};
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
@@ -263,8 +263,8 @@ impl PeerScore {
                         - topic_stats.mesh_message_deliveries;
                     let p3 = deficit * deficit;
                     topic_score += p3 * topic_params.mesh_message_deliveries_weight;
-                    debug!(
-                        "The peer {} has a mesh message deliveries deficit of {} in topic\
+                    warn!(
+                        "SCORE_PENALTY: The peer {} has a mesh message deliveries deficit of {} in topic\
                          {} and will get penalized by {}",
                         peer_id,
                         deficit,
@@ -312,8 +312,8 @@ impl PeerScore {
                 if (peers_in_ip as f64) > self.params.ip_colocation_factor_threshold {
                     let surplus = (peers_in_ip as f64) - self.params.ip_colocation_factor_threshold;
                     let p6 = surplus * surplus;
-                    debug!(
-                        "The peer {} gets penalized because of too many peers with the ip {}. \
+                    warn!(
+                        "SCORE_PENALTY: The peer {} gets penalized because of too many peers with the ip {}. \
                         The surplus is {}. ",
                         peer_id, ip, surplus
                     );
@@ -333,9 +333,9 @@ impl PeerScore {
 
     pub fn add_penalty(&mut self, peer_id: &PeerId, count: usize) {
         if let Some(peer_stats) = self.peer_stats.get_mut(peer_id) {
-            debug!(
-                "Behavioral penalty for peer {}, count = {}.",
-                peer_id, count
+            warn!(
+                "SCORE_PENALTY: Behavioral penalty for peer {}, current = {} additional = {}.",
+                peer_id, peer_stats.behaviour_penalty, count
             );
             peer_stats.behaviour_penalty += count as f64;
         }
@@ -595,7 +595,7 @@ impl PeerScore {
 
     /// Similar to `reject_message` except does not require the message id or reason for an invalid message.
     pub fn reject_invalid_message(&mut self, from: &PeerId, topic_hash: &TopicHash) {
-        debug!(
+        warn!(
             "Message from {} rejected because of ValidationError or SelfOrigin",
             from
         );
@@ -762,8 +762,8 @@ impl PeerScore {
             if let Some(topic_stats) =
                 peer_stats.stats_or_default_mut(topic_hash.clone(), &self.params)
             {
-                debug!(
-                    "Peer {} delivered an invalid message in topic {} and gets penalized \
+                warn!(
+                    "SCORE_PENALTY: Peer {} delivered an invalid message in topic {} and gets penalized \
                     for it",
                     peer_id, topic_hash
                 );
