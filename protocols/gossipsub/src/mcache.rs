@@ -21,7 +21,7 @@
 use crate::topic::TopicHash;
 use crate::types::{MessageId, RawGossipsubMessage};
 use libp2p_core::PeerId;
-use log::debug;
+use log::trace;
 use std::fmt::Debug;
 use std::{collections::HashMap, fmt};
 
@@ -74,7 +74,7 @@ impl MessageCache {
         message_id: &MessageId,
         msg: RawGossipsubMessage,
     ) -> Option<RawGossipsubMessage> {
-        debug!("Put message {:?} in mcache", message_id);
+        trace!("Put message {:?} in mcache", message_id);
         let cache_entry = CacheEntry {
             mid: message_id.clone(),
             topic: msg.topic.clone(),
@@ -165,13 +165,13 @@ impl MessageCache {
                     // If GossipsubConfig::validate_messages is true, the implementing
                     // application has to ensure that Gossipsub::validate_message gets called for
                     // each received message within the cache timeout time."
-                    debug!(
+                    trace!(
                         "The message with id {} got removed from the cache without being validated.",
                         &entry.mid
                     );
                 }
             }
-            debug!("Remove message from the cache: {}", &entry.mid);
+            trace!("Remove message from the cache: {}", &entry.mid);
 
             self.iwant_counts.remove(&entry.mid);
         }
