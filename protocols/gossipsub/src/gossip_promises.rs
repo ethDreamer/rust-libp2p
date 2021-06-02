@@ -22,7 +22,7 @@ use crate::error::ValidationError;
 use crate::peer_score::RejectReason;
 use crate::MessageId;
 use libp2p_core::PeerId;
-use log::debug;
+use log::warn;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::HashMap;
@@ -85,7 +85,7 @@ impl GossipPromises {
                 if *expires < now {
                     let count = result.entry(*peer_id).or_insert(0);
                     *count += 1;
-                    debug!(
+                    warn!(
                         "The peer {} broke the promise to deliver message {} in time!",
                         peer_id, msg
                     );

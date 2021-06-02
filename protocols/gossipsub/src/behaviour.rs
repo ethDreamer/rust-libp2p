@@ -3120,12 +3120,13 @@ where
                 }
 
                 // Handle messages
+                let total_messages = rpc.messages.len();
                 for (count, raw_message) in rpc.messages.into_iter().enumerate() {
                     // Only process the amount of messages the configuration allows.
                     if self.config.max_messages_per_rpc().is_some()
                         && Some(count) >= self.config.max_messages_per_rpc()
                     {
-                        warn!("Received more messages than permitted. Ignoring further messages. Processed: {}", count);
+                        warn!("Received more messages than permitted. Ignoring further messages. Processed: {} existed: {} from {}", count, total_messages, propagation_source);
                         break;
                     }
                     self.handle_received_message(raw_message, &propagation_source);

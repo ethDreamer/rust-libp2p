@@ -24,7 +24,7 @@
 use crate::time_cache::TimeCache;
 use crate::{MessageId, TopicHash};
 use libp2p_core::PeerId;
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use std::collections::{hash_map, HashMap, HashSet};
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
@@ -263,7 +263,7 @@ impl PeerScore {
                         - topic_stats.mesh_message_deliveries;
                     let p3 = deficit * deficit;
                     topic_score += p3 * topic_params.mesh_message_deliveries_weight;
-                    warn!(
+                    debug!(
                         "SCORE_PENALTY: The peer {} has a mesh message deliveries deficit of {} in topic\
                          {} and will get penalized by {}",
                         peer_id,
@@ -313,7 +313,7 @@ impl PeerScore {
                     let surplus = (peers_in_ip as f64) - self.params.ip_colocation_factor_threshold;
                     let p6 = surplus * surplus;
                     score += p6 * self.params.ip_colocation_factor_weight;
-                    warn!(
+                    debug!(
                         "SCORE_PENALTY: The peer {} gets penalized because of too many peers with the ip {}. \
                         The surplus is {}. New Score: {}",
                         peer_id, ip, surplus, score
