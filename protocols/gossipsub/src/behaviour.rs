@@ -1441,7 +1441,7 @@ where
                 if !px.is_empty() {
                     // we ignore PX from peers with insufficient score
                     if below_threshold {
-                        warn!(
+                        debug!(
                             "PRUNE: ignoring PX from peer {:?} with insufficient score \
                              [score ={} topic = {}]",
                             peer_id, score, topic_hash

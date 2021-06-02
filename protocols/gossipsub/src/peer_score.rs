@@ -315,8 +315,8 @@ impl PeerScore {
                     score += p6 * self.params.ip_colocation_factor_weight;
                     debug!(
                         "SCORE_PENALTY: The peer {} gets penalized because of too many peers with the ip {}. \
-                        The surplus is {}. New Score: {}",
-                        peer_id, ip, surplus, score
+                        Peers in IP {}, permitted: {}. New Score: {}",
+                        peer_id, ip, peers_in_ip, self.params.ip_colocation_factor_threshold, score
                     );
                 }
             }
