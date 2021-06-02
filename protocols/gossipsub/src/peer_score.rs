@@ -312,12 +312,12 @@ impl PeerScore {
                 if (peers_in_ip as f64) > self.params.ip_colocation_factor_threshold {
                     let surplus = (peers_in_ip as f64) - self.params.ip_colocation_factor_threshold;
                     let p6 = surplus * surplus;
+                    score += p6 * self.params.ip_colocation_factor_weight;
                     warn!(
                         "SCORE_PENALTY: The peer {} gets penalized because of too many peers with the ip {}. \
-                        The surplus is {}. ",
-                        peer_id, ip, surplus
+                        The surplus is {}. New Score: {}",
+                        peer_id, ip, surplus, score
                     );
-                    score += p6 * self.params.ip_colocation_factor_weight;
                 }
             }
         }
