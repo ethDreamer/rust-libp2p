@@ -969,7 +969,7 @@ where
 
         match self.connected_peers.get(peer).map(|v| &v.kind) {
             Some(PeerKind::Floodsub) => {
-                error!("Attempted to prune a Floodsub peer");
+                error!("Attempted to prune a Floodsub peer: {}", peer);
             }
             Some(PeerKind::Gossipsub) => {
                 // GossipSub v1.0 -- no peer exchange, the peer won't be able to parse it anyway
@@ -980,7 +980,7 @@ where
                 };
             }
             None => {
-                error!("Attempted to Prune an unknown peer");
+                error!("Attempted to Prune an unknown peer: {}", peer);
             }
             _ => {} // Gossipsub 1.1 peer perform the `Prune`
         }
