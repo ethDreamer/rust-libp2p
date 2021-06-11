@@ -22,6 +22,7 @@
 
 mod tests {
     use byteorder::{BigEndian, ByteOrder};
+    use env_logger::{Builder, Env};
     use std::thread::sleep;
     use std::time::Duration;
 
@@ -5227,5 +5228,58 @@ mod tests {
 
         //nobody got penalized
         assert!(gs1.peer_score.as_ref().unwrap().0.score(&p2) >= original_score);
+    }
+
+    // This test is designed to connect a node that subsequently unsubscribes from all topics and
+    // then disconnects. This checks the logic for gracefully handling the removal of the peer from
+    // all required mappings in the gossipsub struct.
+    #[test]
+    fn test_disconnect_node_without_topics() {
+        Builder::from_env(Env::default().default_filter_or("info")).init();
+        let (mut gs, peers, topic_hashes) = inject_nodes1()
+            .peer_no(4)
+            .topics(vec![String::from("topic1"), String::from("topic2")])
+            .to_subscribe(false)
+            .outbound(2)
+            .create_network();
+        let subject_peer = peers[0].clone();
+
+        // Simulate a PRUNE without a backoff.
+        for peer_id in &peers {
+            for topic_hash in &topic_hashes {
+                gs.remove_peer_from_mesh(&subject_peer, topic_hash, None, false);
+                //gs.remove_peer_from_mesh(peer_id, topic_hash, None, false);
+            }
+        }
+        let topic = Topic::new(String::from("topic1"));
+        let _ = gs.unsubscribe(&topic);
+        assert!(!gs.mesh.contains_key(&topic.hash()));
+        let _ = gs.publish(topic, vec![1u8]);
+        gs.heartbeat();
+
+        // Subject peer unsubscribes from all topics
+        let subscriptions = topic_hashes
+            .clone()
+            .into_iter()
+            .map(|topic_hash| GossipsubSubscription {
+                action: GossipsubSubscriptionAction::Unsubscribe,
+                topic_hash,
+            })
+            .collect::<Vec<_>>();
+        // gs.handle_received_subscriptions(&un_subscriptions, &subject_peer);
+
+        assert!(!gs
+            .fanout
+            .get(&topic_hashes[0])
+            .unwrap()
+            .contains(&subject_peer));
+
+        // Disconnect the node.
+        println!("{:?}", gs.peer_topics.get(&subject_peer));
+        //gs.inject_disconnected(&subject_peer);
+        //gs.heartbeat();
+
+        assert!(!gs.connected_peers.contains_key(&subject_peer));
+        assert!(!gs.outbound_peers.contains(&subject_peer));
     }
 }

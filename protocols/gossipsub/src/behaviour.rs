@@ -1234,7 +1234,7 @@ where
         trace!("Completed IWANT handling for peer: {}", peer_id);
     }
 
-    /// Handles GRAFT control messages. If subscribed to the topic, adds the peer to mesh, if not,
+    /// Handles GRAFT control messages. If subscribed to the topic, adds the peer to the mesh, if not,
     /// responds with PRUNE messages.
     fn handle_graft(&mut self, peer_id: &PeerId, topics: Vec<TopicHash>) {
         trace!("Handling GRAFT message for peer: {}", peer_id);
@@ -1258,7 +1258,7 @@ where
                     // if the peer is already in the mesh ignore the graft
                     if peers.contains(peer_id) {
                         warn!(
-                            "GRAFT: Received graft for peer {:?} that is already in topic {:?}",
+                            "GRAFT: Received graft for peer {:?} that is already in the topic mesh {:?}",
                             peer_id, &topic_hash
                         );
                         continue;
@@ -1357,7 +1357,7 @@ where
                 .collect();
             // Send the prune messages to the peer
             debug!(
-                "GRAFT: Not subscribed to topics -  Sending PRUNE to peer: {}",
+                "GRAFT: Did not subscribe to topics -  Sending PRUNE to peer: {}",
                 peer_id
             );
 
@@ -1379,6 +1379,7 @@ where
         trace!("Completed GRAFT handling for peer: {}", peer_id);
     }
 
+    /// Removes the peer from the mesh of the specified topic.
     fn remove_peer_from_mesh(
         &mut self,
         peer_id: &PeerId,
@@ -2006,7 +2007,7 @@ where
                     current_topic.push(topic_hash.clone());
                 }
                 // update the mesh
-                trace!("Updating mesh, new mesh: {:?}", peer_list);
+                trace!("Updating mesh, adding to mesh: {:?}", peer_list);
                 peers.extend(peer_list);
             }
 
@@ -2070,6 +2071,10 @@ where
 
                 // if we have not enough outbound peers, graft to some new outbound peers
                 if outbound < self.config.mesh_outbound_min() {
+                    trace!(
+                        "Not enough outbound peers in topic {}. Searching for more",
+                        topic_hash
+                    );
                     let needed = self.config.mesh_outbound_min() - outbound;
                     let peer_list = get_random_peers(
                         topic_peers,
@@ -2089,7 +2094,7 @@ where
                         current_topic.push(topic_hash.clone());
                     }
                     // update the mesh
-                    trace!("Updating mesh, new mesh: {:?}", peer_list);
+                    trace!("Updating mesh, adding to mesh: {:?}", peer_list);
                     peers.extend(peer_list);
                 }
             }
@@ -2857,17 +2862,7 @@ where
     fn inject_disconnected(&mut self, peer_id: &PeerId) {
         // remove from mesh, topic_peers, peer_topic and the fanout
         info!("Peer disconnected: {}", peer_id);
-        {
-            let topics = match self.peer_topics.get(peer_id) {
-                Some(topics) => (topics),
-                None => {
-                    if !self.blacklisted_peers.contains(peer_id) {
-                        error!("Disconnected node, not in connected nodes");
-                    }
-                    return;
-                }
-            };
-
+        if let Some(topics) = self.peer_topics.get(peer_id) {
             // remove peer from all mappings
             for topic in topics {
                 // check the mesh for the topic
@@ -2897,11 +2892,15 @@ where
                     .get_mut(&topic)
                     .map(|peers| peers.remove(peer_id));
             }
-
-            //forget px and outbound status for this peer
-            self.px_peers.remove(peer_id);
-            self.outbound_peers.remove(peer_id);
+        } else {
+            if !self.blacklisted_peers.contains(peer_id) {
+                error!("Disconnected node, not in connected nodes");
+            }
         }
+
+        //forget px and outbound status for this peer
+        self.px_peers.remove(peer_id);
+        self.outbound_peers.remove(peer_id);
 
         // Remove peer from peer_topics and connected_peers
         // NOTE: It is possible the peer has already been removed from all mappings if it does not

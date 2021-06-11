@@ -132,7 +132,7 @@ impl GossipsubConfig {
     /// Affects how peers are selected when pruning a mesh due to over subscription.
     ///
     ///  At least `retain_scores` of the retained peers will be high-scoring, while the remainder are
-    ///  chosen randomly (D_score in the spec, default is 4).
+    ///  chosen randomly (D_score in the spec, default is 4). Must be less than mesh_n_high.
     pub fn retain_scores(&self) -> usize {
         self.retain_scores
     }
@@ -743,6 +743,10 @@ impl GossipsubConfigBuilder {
 
         if self.config.max_transmit_size < 100 {
             return Err("The maximum transmission size must be greater than 100 to permit basic control messages");
+        }
+
+        if self.config.retain_scores > self.config.mesh_n_high {
+            return Err("The retain scores parameter must be smaller than `mesh_n_high`.");
         }
 
         if self.config.history_length < self.config.history_gossip {
