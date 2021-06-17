@@ -265,11 +265,14 @@ impl PeerScore {
                     topic_score += p3 * topic_params.mesh_message_deliveries_weight;
                     debug!(
                         "SCORE_PENALTY: The peer {} has a mesh message deliveries deficit of {} in topic\
-                         {} and will get penalized by {}",
+                         {} and will get penalized by {} mesh_message_deliveries[{}] threshold[{}] cap[{}]",
                         peer_id,
                         deficit,
                         topic,
-                        p3 * topic_params.mesh_message_deliveries_weight
+                        p3 * topic_params.mesh_message_deliveries_weight,
+                        topic_stats.mesh_message_deliveries,
+                        topic_params.mesh_message_deliveries_threshold,
+                        topic_params.mesh_message_deliveries_cap
                     );
                 }
 

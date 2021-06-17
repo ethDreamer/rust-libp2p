@@ -1903,6 +1903,10 @@ where
     fn apply_iwant_penalties(&mut self) {
         if let Some((peer_score, .., gossip_promises)) = &mut self.peer_score {
             for (peer, count) in gossip_promises.get_broken_promises() {
+                debug!(
+                    "ADD_PENALTY: peer {} has broken {} promises",
+                    peer, count
+                );
                 peer_score.add_penalty(&peer, count);
             }
         }
