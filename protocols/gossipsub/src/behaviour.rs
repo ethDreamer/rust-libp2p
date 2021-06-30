@@ -63,9 +63,9 @@ use crate::types::{
 };
 use crate::types::{GossipsubRpc, PeerConnections, PeerKind};
 use crate::{rpc_proto, TopicScoreParams};
-use std::{cmp::Ordering::Equal, fmt::Debug};
 use std::collections::BTreeMap;
 use std::ops::AddAssign;
+use std::{cmp::Ordering::Equal, fmt::Debug};
 
 #[cfg(test)]
 mod tests;
@@ -197,6 +197,8 @@ impl From<MessageAuthenticity> for PublishConfig {
 type GossipsubNetworkBehaviourAction =
     NetworkBehaviourAction<Arc<GossipsubHandlerIn>, GossipsubEvent>;
 
+pub type MeshIndex = i32;
+
 /// Network behaviour that handles the gossipsub protocol.
 ///
 /// NOTE: Initialisation requires a [`MessageAuthenticity`] and [`GossipsubConfig`] instance. If
@@ -250,8 +252,10 @@ pub struct Gossipsub<
     mesh: HashMap<TopicHash, BTreeSet<PeerId>>,
 
     /// Map of topic to peers to first message counts
-    count_first_messages: HashMap<TopicHash, BTreeMap<PeerId, u64>>,
-    count_all_messages:  HashMap<TopicHash, BTreeMap<PeerId, u64>>,
+    count_first_messages: HashMap<TopicHash, BTreeMap<MeshIndex, u64>>,
+    count_all_messages: HashMap<TopicHash, BTreeMap<MeshIndex, u64>>,
+    /// Map of PeerId to MeshIndex for each topic
+    mesh_index: HashMap<TopicHash, HashMap<PeerId, MeshIndex>>,
 
     /// Map of topics to list of peers that we publish to, but don't subscribe to.
     fanout: HashMap<TopicHash, BTreeSet<PeerId>>,
@@ -402,8 +406,9 @@ where
             explicit_peers: HashSet::new(),
             blacklisted_peers: HashSet::new(),
             mesh: HashMap::new(),
-            count_first_messages: HashMap::new(), // HashMap<TopicHash, std::collections::BTreeMap<PeerId, u64>>,
-            count_all_messages:  HashMap::new(), // HashMap<TopicHash, std::collections::BTreeMap<PeerId, u64>>,
+            count_first_messages: HashMap::new(),
+            count_all_messages: HashMap::new(),
+            mesh_index: HashMap::new(),
             fanout: HashMap::new(),
             fanout_last_pub: HashMap::new(),
             backoffs: BackoffStorage::new(
@@ -466,12 +471,90 @@ where
             .map(|(peer_id, topic_set)| (peer_id, topic_set.iter().collect()))
     }
 
-    pub fn all_messages_count_for_topic(&self, topic: &TopicHash) -> Option<&BTreeMap<PeerId, u64>> {
+    pub fn all_messages_count_for_topic(
+        &self,
+        topic: &TopicHash,
+    ) -> Option<&BTreeMap<MeshIndex, u64>> {
         self.count_all_messages.get(topic)
     }
 
-    pub fn first_messages_count_for_topic(&self, topic: &TopicHash) -> Option<&BTreeMap<PeerId, u64>> {
+    pub fn first_messages_count_for_topic(
+        &self,
+        topic: &TopicHash,
+    ) -> Option<&BTreeMap<MeshIndex, u64>> {
         self.count_first_messages.get(topic)
+    }
+
+    pub fn get_mesh_index_for_topic_for_peer(
+        &self,
+        topic: &TopicHash,
+        peer_id: &PeerId,
+    ) -> Option<&MeshIndex> {
+        match self.mesh_index.get(topic) {
+            Some(mesh_indices) => mesh_indices.get(peer_id),
+            None => None,
+        }
+    }
+
+    fn update_mesh_indices_for_topic(&mut self, topic: &TopicHash) {
+        let mut remove_peers = BTreeMap::new();
+        let mut greatest_index = 0;
+        if let Some(mesh_peers) = self.mesh.get(topic) {
+            // iterate over mesh indices to find peers that have been removed from mesh
+            if let Some(mesh_indices) = self.mesh_index.get(topic) {
+                for (peer, index) in mesh_indices {
+                    if *index > greatest_index {
+                        greatest_index = index.clone();
+                    }
+                    if !mesh_peers.contains(peer) {
+                        remove_peers.insert(index.clone(), peer.clone());
+                        // zero the message counts when the peer is removed
+                        if let Some(all_count) = self.count_all_messages.get_mut(topic) {
+                            *all_count.entry(index.clone()).or_insert_with(|| 0) = 0u64;
+                        }
+                        if let Some(first_count) = self.count_first_messages.get_mut(topic) {
+                            *first_count.entry(index.clone()).or_insert_with(|| 0) = 0u64;
+                        }
+                    }
+                }
+            } else {
+                // topic isn't in mesh indices -> create it
+                self.mesh_index.insert(topic.clone(), HashMap::new());
+            }
+            // iterate over mesh and find new peers that need a peer index
+            if let Some(mesh_indices) = self.mesh_index.get_mut(topic) {
+                for mesh_peer in mesh_peers {
+                    if !mesh_indices.contains_key(mesh_peer) {
+                        let new_index: MeshIndex = match remove_peers.iter().next() {
+                            Some((rm_index, rm_peer)) => {
+                                let result = (*rm_index).clone();
+                                mesh_indices.remove(rm_peer);
+                                remove_peers.remove(&result);
+                                result
+                            }
+                            None => {
+                                greatest_index += 1;
+                                greatest_index
+                            }
+                        };
+                        mesh_indices.insert(mesh_peer.clone(), new_index);
+                    }
+                }
+            }
+        } else {
+            // we aren't subscribed to this topic anymore - zero the counts
+            if let Some(all_count) = self.count_all_messages.get_mut(topic) {
+                for (_, count) in all_count {
+                    *count = 0;
+                }
+            }
+            if let Some(first_count) = self.count_first_messages.get_mut(topic) {
+                for (_, count) in first_count {
+                    *count = 0;
+                }
+            }
+            self.mesh_index.remove(topic);
+        }
     }
 
     /// Lists all known peers and their associated protocol.
@@ -970,6 +1053,7 @@ where
                 &self.connected_peers,
             );
         }
+        self.update_mesh_indices_for_topic(topic_hash);
         trace!("Completed JOIN for topic: {:?}", topic_hash);
     }
 
@@ -1051,6 +1135,7 @@ where
                     &self.connected_peers,
                 );
             }
+            self.update_mesh_indices_for_topic(topic_hash);
         }
         trace!("Completed LEAVE for topic: {:?}", topic_hash);
     }
@@ -1339,6 +1424,7 @@ where
                         peer_id, &topic_hash
                     );
                     peers.insert(*peer_id);
+                    self.update_mesh_indices_for_topic(&topic_hash);
                     // If the peer did not previously exist in any mesh, inform the handler
                     peer_added_to_mesh(
                         *peer_id,
@@ -1404,7 +1490,7 @@ where
         always_update_backoff: bool,
     ) {
         let mut update_backoff = always_update_backoff;
-        if let Some(peers) = self.mesh.get_mut(&topic_hash) {
+        if let Some(peers) = self.mesh.get_mut(topic_hash) {
             // remove the peer if it exists in the mesh
             if peers.remove(peer_id) {
                 debug!(
@@ -1428,6 +1514,7 @@ where
                     &mut self.events,
                     &self.connected_peers,
                 );
+                self.update_mesh_indices_for_topic(topic_hash);
             }
         }
         if update_backoff {
@@ -1607,10 +1694,22 @@ where
         mut raw_message: RawGossipsubMessage,
         propagation_source: &PeerId,
     ) {
+        let propagation_index = match self.mesh.get(&raw_message.topic) {
+            Some(set) if set.contains(propagation_source) => self
+                .mesh_index
+                .entry(raw_message.topic.clone())
+                .or_insert_with(|| HashMap::new())
+                .get(propagation_source)
+                .map(|f| *f)
+                .unwrap_or_else(|| -2),
+            Some(_) => -3,
+            None => -4,
+        };
+
         self.count_all_messages
             .entry(raw_message.topic.clone())
             .or_insert_with(|| BTreeMap::new())
-            .entry(propagation_source.to_owned())
+            .entry(propagation_index.clone())
             .or_insert_with(|| 0)
             .add_assign(1);
 
@@ -1665,12 +1764,11 @@ where
                 peer_score.duplicated_message(propagation_source, &msg_id, &message.topic);
             }
             return;
-        }
-        else {
+        } else {
             self.count_first_messages
                 .entry(message.topic.clone())
                 .or_insert_with(|| BTreeMap::new())
-                .entry(propagation_source.to_owned())
+                .entry(propagation_index)
                 .or_insert_with(|| 0)
                 .add_assign(1)
         }
@@ -1882,9 +1980,16 @@ where
             }
         }
 
+        let mut modified_topics = topics_to_graft.iter().collect::<HashSet<_>>();
         // remove unsubscribed peers from the mesh if it exists
         for (peer_id, topic_hash) in unsubscribed_peers {
             self.remove_peer_from_mesh(&peer_id, &topic_hash, None, false);
+            // remove_peer_from_mesh will update the peer indices for us so we don't need to update it
+            modified_topics.remove(&topic_hash);
+        }
+
+        for topic in modified_topics {
+            self.update_mesh_indices_for_topic(topic);
         }
 
         // Potentially inform the handler if we have added this peer to a mesh for the first time.
@@ -1976,6 +2081,8 @@ where
             _ => 0.0,
         };
 
+        // keeps track of which topics changed in the mesh
+        let mut modified_topics = HashSet::new();
         // maintain the mesh for each topic
         for (topic_hash, peers) in self.mesh.iter_mut() {
             let explicit_peers = &self.explicit_peers;
@@ -2008,6 +2115,10 @@ where
                 })
                 .cloned()
                 .collect();
+
+            if !to_remove.is_empty() {
+                modified_topics.insert(topic_hash.clone());
+            }
             for peer in to_remove {
                 peers.remove(&peer);
             }
@@ -2041,6 +2152,7 @@ where
                 // update the mesh
                 trace!("Updating mesh, adding to mesh: {:?}", peer_list);
                 peers.extend(peer_list);
+                modified_topics.insert(topic_hash.clone());
             }
 
             // too many peers - remove some
@@ -2090,6 +2202,7 @@ where
 
                     // remove the peer
                     peers.remove(&peer);
+                    modified_topics.insert(topic_hash.clone());
                     let current_topic = to_prune.entry(peer).or_insert_with(Vec::new);
                     current_topic.push(topic_hash.clone());
                     removed += 1;
@@ -2128,6 +2241,7 @@ where
                     // update the mesh
                     trace!("Updating mesh, adding to mesh: {:?}", peer_list);
                     peers.extend(peer_list);
+                    modified_topics.insert(topic_hash.clone());
                 }
             }
 
@@ -2188,6 +2302,7 @@ where
                             peer_list
                         );
                         peers.extend(peer_list);
+                        modified_topics.insert(topic_hash.clone());
                     }
                 }
             }
@@ -2309,6 +2424,10 @@ where
 
         // shift the memcache
         self.mcache.shift();
+
+        for topic in modified_topics {
+            self.update_mesh_indices_for_topic(&topic);
+        }
 
         trace!("Completed Heartbeat");
     }
@@ -2894,6 +3013,7 @@ where
     fn inject_disconnected(&mut self, peer_id: &PeerId) {
         // remove from mesh, topic_peers, peer_topic and the fanout
         info!("Peer disconnected: {}", peer_id);
+        let mut modified_topics = HashSet::new();
         if let Some(topics) = self.peer_topics.get(peer_id) {
             // remove peer from all mappings
             for topic in topics {
@@ -2901,6 +3021,7 @@ where
                 if let Some(mesh_peers) = self.mesh.get_mut(&topic) {
                     // check if the peer is in the mesh and remove it
                     mesh_peers.remove(peer_id);
+                    modified_topics.insert(topic.clone());
                 }
 
                 // remove from topic_peers
@@ -2928,6 +3049,10 @@ where
             if !self.blacklisted_peers.contains(peer_id) {
                 error!("Disconnected node, not in connected nodes");
             }
+        }
+
+        for topic in modified_topics {
+            self.update_mesh_indices_for_topic(&topic);
         }
 
         //forget px and outbound status for this peer
