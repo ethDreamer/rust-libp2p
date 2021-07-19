@@ -2123,8 +2123,20 @@ where
         // cache scores throughout the heartbeat
         let mut scores = HashMap::new();
         let peer_score = &self.peer_score;
-        let mut score = |p: &PeerId| match peer_score {
-            Some((peer_score, ..)) => *scores.entry(*p).or_insert_with(|| peer_score.score(p)),
+        let mesh_indices = &self.mesh_indices;
+        let mut score = |p: &PeerId, t: &TopicHash| match peer_score {
+            Some((peer_score, ..)) => {
+                match scores.entry(t.clone()).or_insert_with(|| HashMap::new()).get(p) {
+                    Some(x) => *x,
+                    None => {
+                        let slot_idx = match mesh_indices.get(t) {
+                            Some(mesh_index) => mesh_index.get(p).map(|f| *f),
+                            None => None,
+                        };
+                        *scores.entry(t.clone()).or_insert_with(|| HashMap::new()).entry(*p).or_insert_with(|| peer_score.score_with_index(p, slot_idx))
+                    }
+                }
+            },
             _ => 0.0,
         };
 
@@ -2143,12 +2155,12 @@ where
             let to_remove: Vec<_> = peers
                 .iter()
                 .filter(|&p| {
-                    if score(p) < 0.0 {
+                    if score(p, topic_hash) < 0.0 {
                         trace!(
                             "HEARTBEAT: Prune peer {:?} with negative score [score = {}, topic = \
                              {}]",
                             p,
-                            score(p),
+                            score(p, topic_hash),
                             topic_hash
                         );
 
@@ -2199,7 +2211,7 @@ where
                         !peers.contains(peer)
                             && !explicit_peers.contains(peer)
                             && !backoffs.is_backoff_with_slack(topic_hash, peer)
-                            && score(peer) >= 0.0
+                            && score(peer, topic_hash) >= 0.0
                     },
                 );
                 for peer in &peer_list {
@@ -2227,7 +2239,7 @@ where
                 let mut shuffled = peers.iter().cloned().collect::<Vec<_>>();
                 shuffled.shuffle(&mut rng);
                 shuffled
-                    .sort_by(|p1, p2| score(p1).partial_cmp(&score(p2)).unwrap_or(Ordering::Equal));
+                    .sort_by(|p1, p2| score(p1, topic_hash).partial_cmp(&score(p2,topic_hash)).unwrap_or(Ordering::Equal));
                 // shuffle everything except the last retain_scores many peers (the best ones)
                 shuffled[..peers.len() - self.config.retain_scores()].shuffle(&mut rng);
 
@@ -2287,7 +2299,7 @@ where
                             !peers.contains(peer)
                                 && !explicit_peers.contains(peer)
                                 && !backoffs.is_backoff_with_slack(topic_hash, peer)
-                                && score(peer) >= 0.0
+                                && score(peer, topic_hash) >= 0.0
                                 && outbound_peers.contains(peer)
                         },
                     );
@@ -2319,7 +2331,7 @@ where
                     // now compute the median peer score in the mesh
                     let mut peers_by_score: Vec<_> = peers.iter().collect();
                     peers_by_score
-                        .sort_by(|p1, p2| score(p1).partial_cmp(&score(p2)).unwrap_or(Equal));
+                        .sort_by(|p1, p2| score(p1, topic_hash).partial_cmp(&score(p2, topic_hash)).unwrap_or(Equal));
 
                     let middle = peers_by_score.len() / 2;
                     let median = if peers_by_score.len() % 2 == 0 {
@@ -2327,10 +2339,10 @@ where
                             *peers_by_score.get(middle - 1).expect(
                                 "middle < vector length and middle > 0 since peers.len() > 0",
                             ),
-                        ) + score(*peers_by_score.get(middle).expect("middle < vector length")))
+                        topic_hash) + score(*peers_by_score.get(middle).expect("middle < vector length"), topic_hash))
                             * 0.5
                     } else {
-                        score(*peers_by_score.get(middle).expect("middle < vector length"))
+                        score(*peers_by_score.get(middle).expect("middle < vector length"), topic_hash)
                     };
 
                     // if the median score is below the threshold, select a better peer (if any) and
@@ -2345,7 +2357,7 @@ where
                                 !peers.contains(peer)
                                     && !explicit_peers.contains(peer)
                                     && !backoffs.is_backoff_with_slack(topic_hash, peer)
-                                    && score(peer) > median
+                                    && score(peer, topic_hash) > median
                             },
                         );
                         for peer in &peer_list {
@@ -2394,7 +2406,7 @@ where
                 // is the peer still subscribed to the topic?
                 match self.peer_topics.get(peer) {
                     Some(topics) => {
-                        if !topics.contains(&topic_hash) || score(peer) < publish_threshold {
+                        if !topics.contains(&topic_hash) || score(peer, topic_hash) < publish_threshold {
                             trace!(
                                 "HEARTBEAT: Peer removed from fanout for topic: {:?}",
                                 topic_hash
@@ -2429,7 +2441,7 @@ where
                     |peer| {
                         !peers.contains(peer)
                             && !explicit_peers.contains(peer)
-                            && score(peer) < publish_threshold
+                            && score(peer, topic_hash) < publish_threshold
                     },
                 );
                 peers.extend(new_peers);
@@ -2437,12 +2449,14 @@ where
         }
 
         if self.peer_score.is_some() {
+            /*
             trace!("Peer_scores: {:?}", {
                 for peer in self.peer_topics.keys() {
                     score(peer);
                 }
                 scores
             });
+            */
             trace!("Mesh message deliveries: {:?}", {
                 self.mesh
                     .iter()
